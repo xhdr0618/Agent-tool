@@ -25,8 +25,8 @@
 
 1. 克隆仓库：
 ```bash
-git clone [repository_url]
-cd [repository_name]
+git clone https://github.com/xhdr0618/Agent-tool.git
+cd AGENT-TOOL
 ```
 
 2. 安装依赖：
