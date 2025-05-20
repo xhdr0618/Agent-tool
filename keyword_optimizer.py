@@ -2,6 +2,7 @@ import os
 from typing import List, Dict
 import requests
 from dotenv import load_dotenv
+import json
 
 class KeywordOptimizer:
     def __init__(self):
@@ -13,31 +14,32 @@ class KeywordOptimizer:
         if not self.api_key:
             raise ValueError("请在.env文件中设置DEEPSEEK_API_KEY")
             
-        self.api_endpoint = "https://api.deepseek.com/v3/chat/completions"
+        self.api_endpoint = "https://api.deepseek.com/chat/completions"
         
     def optimize_keywords(self, query: str) -> Dict[str, List[str]]:
         """
         使用DeepSeek优化搜索关键词
         :param query: 原始搜索关键词
-        :return: 优化后的关键词字典，包含不同类型的关键词列表
+        :return: 优化后的关键词字典，主要包含同义词
         """
         prompt = f"""
-        作为一个生物信息学专家，请帮我优化以下搜索关键词，用于学术文献检索：
+        作为一个生物信息学专家，请为以下搜索关键词提供学术文献检索用的同义词。
         原始关键词: {query}
         
-        请提供以下几个方面的优化：
-        1. 同义词和相关术语
-        2. 更专业的学术表达
-        3. 常见的缩写形式
-        4. 相关的研究方法或技术
-        5. 建议的布尔搜索组合
+        请提供5-10个最相关的同义词或相近表达，要求：
+        1. 必须是学术文献中常用的表达方式
+        2. 应该包括该领域常用的缩写形式（如果有）
+        3. 每个词都应该是独立的搜索词，不要包含布尔操作符
+        4. 保持简洁，每个同义词不超过3-4个单词
         
-        请以JSON格式返回结果，包含以下字段：
-        - synonyms: 同义词列表
-        - academic_terms: 学术术语列表
-        - abbreviations: 缩写列表
-        - methods: 相关方法/技术列表
-        - boolean_combinations: 布尔搜索组合列表
+        只需返回一个JSON对象，格式如下：
+        {{
+            "synonyms": [
+                "term1",
+                "term2",
+                "term3"
+            ]
+        }}
         """
         
         try:
@@ -59,8 +61,18 @@ class KeywordOptimizer:
             result = response.json()
             optimized_keywords = result['choices'][0]['message']['content']
             
+            # 打印原始响应以便调试
+            print("\nAPI响应内容：")
+            print(optimized_keywords)
+            
             # 处理返回的结果
-            return self._process_response(optimized_keywords)
+            processed_result = self._process_response(optimized_keywords)
+            
+            # 打印处理后的结果以便调试
+            print("\n处理后的结果：")
+            print(processed_result)
+            
+            return processed_result
             
         except Exception as e:
             print(f"优化关键词时出错: {str(e)}")
@@ -73,11 +85,46 @@ class KeywordOptimizer:
         :return: 处理后的关键词字典
         """
         try:
-            # 这里需要解析返回的JSON文本
-            # 实际实现时可能需要更复杂的处理
-            import json
-            return json.loads(response_text)
-        except:
+            # 清理响应文本
+            json_str = response_text.strip()
+            
+            # 如果文本以```json开头，去掉这部分
+            if "```json" in json_str:
+                json_str = json_str.split("```json")[1]
+            if "```" in json_str:
+                json_str = json_str.split("```")[0]
+                
+            # 去掉可能的前后缀说明文字
+            start_idx = json_str.find('{')
+            end_idx = json_str.rfind('}') + 1
+            if start_idx != -1 and end_idx != 0:
+                json_str = json_str[start_idx:end_idx]
+            
+            # 解析JSON
+            result = json.loads(json_str)
+            
+            # 确保返回的是字典格式且包含synonyms字段
+            if isinstance(result, dict) and "synonyms" in result:
+                # 过滤掉空字符串和None值，并清理每个词
+                synonyms = []
+                for term in result["synonyms"]:
+                    if term and isinstance(term, str):
+                        cleaned_term = term.strip().strip('"').strip("'")
+                        if cleaned_term:
+                            synonyms.append(cleaned_term)
+                            
+                # 去重
+                synonyms = list(set(synonyms))
+                return {"synonyms": synonyms}
+            else:
+                print("API返回的格式不正确")
+                return self._get_default_optimization(response_text)
+        except json.JSONDecodeError as e:
+            print(f"JSON解析错误: {str(e)}")
+            print(f"尝试解析的文本: {json_str}")
+            return self._get_default_optimization(response_text)
+        except Exception as e:
+            print(f"处理API响应时出错: {str(e)}")
             return self._get_default_optimization(response_text)
             
     def _get_default_optimization(self, query: str) -> Dict[str, List[str]]:
@@ -86,13 +133,7 @@ class KeywordOptimizer:
         :param query: 原始查询词
         :return: 默认的优化结果
         """
-        return {
-            "synonyms": [query],
-            "academic_terms": [query],
-            "abbreviations": [],
-            "methods": [],
-            "boolean_combinations": [f"({query})"]
-        }
+        return {"synonyms": [query]}
         
     def generate_search_variations(self, query: str) -> List[str]:
         """
@@ -108,15 +149,6 @@ class KeywordOptimizer:
         
         # 添加同义词搜索
         variations.extend(optimized["synonyms"])
-        
-        # 添加学术术语
-        variations.extend(optimized["academic_terms"])
-        
-        # 添加缩写形式
-        variations.extend(optimized["abbreviations"])
-        
-        # 添加布尔组合
-        variations.extend(optimized["boolean_combinations"])
         
         # 去重并返回
         return list(set(variations))

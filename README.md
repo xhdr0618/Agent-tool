@@ -1,129 +1,136 @@
 # 生物信息学文献调研自动化工具
 
-这是一个用于自动化文献调研的Python工具，专门针对生物信息学领域。该工具可以从多个学术数据库获取文献信息，包括：
-
-- PubMed
-- bioRxiv
-- Google Scholar
+这是一个强大的生物信息学文献调研自动化工具，可以从多个学术数据源检索相关文献，并提供智能的关键词优化功能。
 
 ## 功能特点
 
-- 多数据源整合搜索
-- 自动提取文章标题、作者、摘要等信息
-- 结果自动保存为Excel格式
-- 内置请求限制，避免被封IP
-- 支持自定义搜索源和检索数量
-- 支持命令行参数控制
-- bioRxiv搜索支持3分钟超时保护（保存已检索文献）
+- **多数据源支持**
+  - PubMed
+  - bioRxiv（预印本）
+  - Google Scholar
 
-## 安装要求
+- **智能关键词优化**
+  - 自动生成相关的学术同义词
+  - 支持领域特定的缩写和术语
+  - 可通过参数禁用优化功能
 
-1. Python 3.7+
-2. 安装依赖包：
+- **高级功能**
+  - 并行搜索多个数据源
+  - bioRxiv 搜索的超时保护（3分钟）
+  - 自动去重（基于标题）
+  - Excel 格式结果输出
+  - 实时保存已检索文献
+
+## 安装步骤
+
+1. 克隆仓库：
+```bash
+git clone [repository_url]
+cd [repository_name]
+```
+
+2. 安装依赖：
 ```bash
 pip install -r requirements.txt
 ```
 
+3. 配置环境变量：
+创建 `.env` 文件并添加以下内容：
+```
+EMAIL=your_email@example.com
+DEEPSEEK_API_KEY=your_api_key_here
+```
+
 ## 使用方法
 
-### 1. 配置环境
+### 基本用法
 
-创建`.env`文件并添加您的邮箱地址（用于PubMed API）：
-```
-EMAIL=your.email@example.com
-```
-
-### 2. 命令行使用
-
-基本使用：
 ```bash
 python literature_pipeline.py -q "your search query"
 ```
 
-完整参数说明：
+### 完整参数说明
+
 ```bash
-python literature_pipeline.py \
-    -q "Antimicrobial peptides" \          # 搜索关键词（必需）
-    -s pubmed biorxiv scholar \            # 选择数据源
-    --pubmed-count 50 \                    # PubMed文献数量
-    --biorxiv-count 30 \                   # bioRxiv文献数量
-    --scholar-count 20 \                   # Google Scholar文献数量
-    -e your.email@example.com              # 邮箱地址（可选）
+python literature_pipeline.py [-h] --query QUERY 
+                            [--sources {pubmed,biorxiv,scholar} [{pubmed,biorxiv,scholar} ...]]
+                            [--pubmed-count PUBMED_COUNT]
+                            [--biorxiv-count BIORXIV_COUNT]
+                            [--scholar-count SCHOLAR_COUNT]
+                            [--email EMAIL]
+                            [--no-optimize]
 ```
 
-### 3. 参数说明
+参数说明：
+- `-q, --query`: 搜索关键词（必需）
+- `-s, --sources`: 选择要搜索的数据源（默认：全部）
+- `--pubmed-count`: PubMed检索文献数量（默认：20）
+- `--biorxiv-count`: bioRxiv检索文献数量（默认：20）
+- `--scholar-count`: Google Scholar检索文献数量（默认：20）
+- `-e, --email`: 用于PubMed API的邮箱地址
+- `--no-optimize`: 禁用关键词优化功能
 
-| 参数 | 简写 | 说明 | 默认值 |
-|------|------|------|--------|
-| --query | -q | 搜索关键词（必需） | - |
-| --sources | -s | 要搜索的数据库 | pubmed,biorxiv,scholar |
-| --pubmed-count | - | PubMed检索数量 | 20 |
-| --biorxiv-count | - | bioRxiv检索数量 | 20 |
-| --scholar-count | - | Google Scholar检索数量 | 20 |
-| --email | -e | PubMed API邮箱 | 从.env读取 |
+### 使用示例
 
-### 4. 使用示例
-
-1. **只搜索PubMed，检索50篇文献**：
+1. 基本搜索：
 ```bash
-python literature_pipeline.py -q "RNA" -s pubmed --pubmed-count 50
+python literature_pipeline.py -q "Antimicrobial peptides"
 ```
 
-2. **搜索多个数据源，自定义数量**：
+2. 指定数据源：
 ```bash
-python literature_pipeline.py -q "CRISPR" -s pubmed biorxiv --pubmed-count 30 --biorxiv-count 20
+python literature_pipeline.py -q "CRISPR" -s pubmed biorxiv
 ```
 
-3. **使用引号包含的短语**：
+3. 自定义检索数量：
 ```bash
-python literature_pipeline.py -q "single cell RNA sequencing"
+python literature_pipeline.py -q "Gene therapy" --pubmed-count 50 --biorxiv-count 30
 ```
 
-## 输出结果
+4. 禁用关键词优化：
+```bash
+python literature_pipeline.py -q "Cancer immunotherapy" --no-optimize
+```
 
-结果将保存在`literature_results`目录下，文件名格式为`literature_results_YYYYMMDD_HHMMSS.xlsx`，包含以下字段：
+## 输出说明
 
-- source: 数据来源
-- id: 文章ID/DOI
-- title: 文章标题
-- authors: 作者列表
-- abstract: 文章摘要
-- url: 文章链接
-- published_date: 发布日期（仅部分来源支持）
-- category: 文章分类（仅部分来源支持）
+- 检索结果将保存在 `literature_results` 目录下
+- 文件名格式：`literature_results_YYYYMMDD_HHMMSS.xlsx`
+- Excel文件包含以下列：
+  - source: 数据来源
+  - title: 文章标题
+  - authors: 作者列表
+  - abstract: 摘要
+  - url: 文章链接
+  - id: 文章ID
+  - published_date: 发布日期（仅bioRxiv）
+  - category: 分类（仅bioRxiv）
 
 ## 注意事项
 
-1. **PubMed API使用**：
-   - 需要提供有效的邮箱地址
-   - 可以通过命令行参数或.env文件配置
-
-2. **Google Scholar注意事项**：
-   - 有请求频率限制
-   - 建议适当控制检索数量
-   - 每次请求间有2秒延迟
-
-3. **bioRxiv搜索说明**：
-   - 设置了3分钟超时保护
-   - 超时时会保存已检索到的文献
-   - 支持实时保存检索结果
-
-4. **一般建议**：
-   - 建议根据实际需求调整检索数量
-   - 关键词越具体，结果越相关
-   - 可以分多次检索，使用不同的关键词
+1. 确保提供有效的邮箱地址（用于PubMed API）
+2. bioRxiv搜索设有3分钟超时限制
+3. 为避免被封禁，Google Scholar搜索有延时机制
+4. 关键词优化功能需要有效的DeepSeek API密钥
 
 ## 错误处理
 
-1. 如果遇到API错误：
-   - 检查网络连接
-   - 验证邮箱地址是否正确
-   - 确认API访问限制
+- 如果搜索过程中出现错误，程序会继续处理其他数据源
+- 对于超时的bioRxiv搜索，会保存已检索到的结果
+- 所有错误和警告信息都会在控制台显示
 
-2. 如果结果为空：
-   - 尝试使用更通用的关键词
-   - 检查选择的数据源是否正确
-   - 增加检索数量
+## 依赖说明
+
+主要依赖包：
+- pandas
+- biopython
+- requests
+- beautifulsoup4
+- scholarly
+- python-dotenv
+- tqdm
+
+详细的依赖列表请参见 `requirements.txt`。
 
 ## 贡献
 

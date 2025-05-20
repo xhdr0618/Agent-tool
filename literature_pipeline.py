@@ -13,6 +13,7 @@ from contextlib import contextmanager
 import threading
 from queue import Queue
 import argparse
+from keyword_optimizer import KeywordOptimizer
 
 class TimeoutException(Exception):
     pass
@@ -47,7 +48,37 @@ class LiteraturePipeline:
         Entrez.email = email
         self.results_dir = "literature_results"
         os.makedirs(self.results_dir, exist_ok=True)
+        self.keyword_optimizer = None  # 初始化为None，在需要时才创建实例
         
+    def optimize_query(self, query: str) -> dict:
+        """
+        使用关键词优化器优化搜索关键词
+        :param query: 原始查询词
+        :return: 优化后的查询词字典
+        """
+        if self.keyword_optimizer is None:
+            try:
+                self.keyword_optimizer = KeywordOptimizer()
+            except ValueError as e:
+                print(f"警告：无法初始化关键词优化器 - {str(e)}")
+                return {"synonyms": [query], "academic_terms": [], "abbreviations": [], "methods": [], "boolean_combinations": []}
+                
+        try:
+            variations = self.keyword_optimizer.optimize_keywords(query)
+            if not isinstance(variations, dict):
+                print(f"警告：关键词优化器返回了非字典格式的结果")
+                return {"synonyms": [query], "academic_terms": [], "abbreviations": [], "methods": [], "boolean_combinations": []}
+                
+            print(f"\n关键词优化结果：")
+            for category, terms in variations.items():
+                print(f"\n{category}:")
+                for term in terms:
+                    print(f"- {term}")
+            return variations
+        except Exception as e:
+            print(f"关键词优化失败: {str(e)}")
+            return {"synonyms": [query], "academic_terms": [], "abbreviations": [], "methods": [], "boolean_combinations": []}
+
     def search_pubmed(self, query, max_results=20):
         """
         搜索PubMed数据库
@@ -260,11 +291,13 @@ class LiteraturePipeline:
         
         def worker():
             try:
-                # 修改bioRxiv搜索函数以支持实时更新结果
-                def article_callback(article):
-                    current_articles.append(article)
+                # 如果是bioRxiv搜索函数，添加回调函数
+                if search_func == self.search_biorxiv:
+                    def article_callback(article):
+                        current_articles.append(article)
+                    kwargs['callback'] = article_callback
                     
-                result = search_func(*args, callback=article_callback, **kwargs)
+                result = search_func(*args, **kwargs)
                 result_queue.put(("success", result))
             except Exception as e:
                 result_queue.put(("error", str(e)))
@@ -305,7 +338,7 @@ class LiteraturePipeline:
         运行完整的文献调研管道
         :param query: 搜索关键词
         :param include_sources: 要包含的数据源列表 ["pubmed", "biorxiv", "scholar"]
-        :param optimize_keywords: 是否使用DeepSeek优化关键词
+        :param optimize_keywords: 是否使用关键词优化
         :return: 保存的文件路径
         """
         if include_sources is None:
@@ -313,107 +346,78 @@ class LiteraturePipeline:
             
         all_articles = []
         
-        # 如果启用了关键词优化
+        # 获取优化后的查询词列表
         if optimize_keywords:
             try:
-                from keyword_optimizer import KeywordOptimizer
-                optimizer = KeywordOptimizer()
-                print("\n正在使用DeepSeek优化搜索关键词...")
+                optimized = self.optimize_query(query)
+                # 从优化结果中提取同义词
+                queries = []
+                # 添加原始查询
+                queries.append(query)
+                # 添加同义词
+                queries.extend(optimized.get("synonyms", []))
                 
-                # 获取优化后的关键词
-                optimized = optimizer.optimize_keywords(query)
+                # 去重并过滤空字符串
+                queries = list(set(filter(None, queries)))
                 
-                print("\n优化结果：")
-                for category, terms in optimized.items():
-                    print(f"\n{category}:")
-                    for term in terms:
-                        print(f"- {term}")
-                
-                # 使用优化后的关键词进行搜索
-                search_terms = optimizer.generate_search_variations(query)
-                print(f"\n将使用 {len(search_terms)} 个搜索变体进行检索")
-                
-                # 对每个关键词变体进行搜索
-                for term in search_terms:
-                    print(f"\n使用关键词: {term}")
-                    if "pubmed" in include_sources:
-                        articles = self.search_pubmed(term)
-                        all_articles.extend(articles)
-                        
-                    if "biorxiv" in include_sources:
-                        print("\n正在搜索bioRxiv（设置3分钟超时）...")
-                        articles = self.search_with_timeout(
-                            self.search_biorxiv,
-                            term,
-                            timeout_seconds=180
-                        )
-                        all_articles.extend(articles)
-                        
-                    if "scholar" in include_sources:
-                        articles = self.search_google_scholar(term)
-                        all_articles.extend(articles)
-                        
+                print("\n使用以下查询词进行搜索：")
+                for q in queries:
+                    print(f"- {q}")
+                print()
             except Exception as e:
-                print(f"\n关键词优化失败: {str(e)}")
-                print("将使用原始关键词继续搜索")
-                # 如果优化失败，使用原始关键词
-                if "pubmed" in include_sources:
-                    all_articles.extend(self.search_pubmed(query))
-                if "biorxiv" in include_sources:
-                    all_articles.extend(self.search_with_timeout(
-                        self.search_biorxiv,
-                        query,
-                        timeout_seconds=180
-                    ))
-                if "scholar" in include_sources:
-                    all_articles.extend(self.search_google_scholar(query))
+                print(f"关键词优化处理出错: {str(e)}")
+                queries = [query]
         else:
-            # 使用原始关键词搜索
-            if "pubmed" in include_sources:
-                all_articles.extend(self.search_pubmed(query))
-            if "biorxiv" in include_sources:
-                all_articles.extend(self.search_with_timeout(
-                    self.search_biorxiv,
-                    query,
-                    timeout_seconds=180
-                ))
-            if "scholar" in include_sources:
-                all_articles.extend(self.search_google_scholar(query))
+            queries = [query]
+        
+        # 对每个优化后的查询词进行搜索
+        for current_query in queries:
+            print(f"\n使用查询词：{current_query}")
             
-        # 去重
+            if "pubmed" in include_sources:
+                articles = self.search_pubmed(current_query)
+                all_articles.extend(articles)
+                print(f"从PubMed获取到 {len(articles)} 篇文献")
+                
+            if "biorxiv" in include_sources:
+                print("\n正在搜索bioRxiv（设置3分钟超时）...")
+                biorxiv_results = self.search_with_timeout(
+                    self.search_biorxiv,
+                    current_query,
+                    timeout_seconds=180
+                )
+                all_articles.extend(biorxiv_results)
+                
+            if "scholar" in include_sources:
+                articles = self.search_google_scholar(current_query)
+                all_articles.extend(articles)
+                print(f"从Google Scholar获取到 {len(articles)} 篇文献")
+        
+        # 去重（基于标题）
         unique_articles = []
         seen_titles = set()
         for article in all_articles:
-            title = article.get("title", "").lower()
-            if title and title not in seen_titles:
+            title = article['title'].lower().strip()
+            if title not in seen_titles:
                 seen_titles.add(title)
                 unique_articles.append(article)
-                
+        
         # 转换为DataFrame并保存
         df = pd.DataFrame(unique_articles)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(self.results_dir, f"literature_results_{timestamp}.xlsx")
         
-        # 添加搜索信息
-        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Articles', index=False)
-            
-            # 创建搜索信息表
-            search_info = pd.DataFrame({
-                'Parameter': ['Original Query', 'Optimized', 'Sources Used', 'Total Articles', 'Unique Articles'],
-                'Value': [
-                    query,
-                    'Yes' if optimize_keywords else 'No',
-                    ', '.join(include_sources),
-                    len(all_articles),
-                    len(unique_articles)
-                ]
-            })
-            search_info.to_excel(writer, sheet_name='Search Info', index=False)
+        # 重新组织列的顺序
+        columns = ['source', 'title', 'authors', 'abstract', 'url', 'id']
+        if 'published_date' in df.columns:
+            columns.append('published_date')
+        if 'category' in df.columns:
+            columns.append('category')
         
-        print(f"\n检索完成！")
-        print(f"总文献数: {len(all_articles)}")
-        print(f"去重后文献数: {len(unique_articles)}")
+        df = df[columns]
+        df.to_excel(output_file, index=False)
+        
+        print(f"\n检索完成！共找到 {len(df)} 篇独特文献")
         print(f"结果已保存至: {output_file}")
         
         # 显示每个来源的文章数量
@@ -471,7 +475,7 @@ if __name__ == "__main__":
                       help='用于PubMed API的邮箱地址。如果不提供，将从.env文件读取')
     
     parser.add_argument('--no-optimize', action='store_true',
-                      help='禁用关键词优化')
+                      help='禁用关键词优化功能')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -488,10 +492,15 @@ if __name__ == "__main__":
     # 创建pipeline实例
     pipeline = LiteraturePipeline(email)
     
-    # 设置每个数据源的检索数量
-    pipeline.search_pubmed = lambda q: pipeline.search_pubmed(q, max_results=args.pubmed_count)
-    pipeline.search_biorxiv = lambda q: pipeline.search_biorxiv(q, max_results=args.biorxiv_count)
-    pipeline.search_google_scholar = lambda q: pipeline.search_google_scholar(q, max_results=args.scholar_count)
+    # 保存原始方法的引用
+    original_pubmed_search = pipeline.search_pubmed
+    original_biorxiv_search = pipeline.search_biorxiv
+    original_google_scholar_search = pipeline.search_google_scholar
+    
+    # 设置每个数据源的检索数量，正确处理callback参数
+    pipeline.search_pubmed = lambda q, **kwargs: original_pubmed_search(q, max_results=args.pubmed_count)
+    pipeline.search_biorxiv = lambda q, **kwargs: original_biorxiv_search(q, max_results=args.biorxiv_count, **kwargs)
+    pipeline.search_google_scholar = lambda q, **kwargs: original_google_scholar_search(q, max_results=args.scholar_count)
     
     # 执行搜索
     print("\n搜索配置：")
